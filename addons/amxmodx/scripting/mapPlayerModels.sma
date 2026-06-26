@@ -9,10 +9,12 @@
 *		None
 *
 *	Commands:
+*       None
 *
 *	Changelog:
 *       v1.0: Initial release.
 *       v1.1: Supports sub-models
+*       v1.2: Added rank-based model pools (USER/VIP/ADMIN/OWNER)
 *
 */
 
@@ -21,19 +23,60 @@
 #include <cstrike>
 #include <fakemeta>
 
+enum
+{
+    SECTION_NONE,
+    SECTION_RANK,
+    SECTION_MAP
+}
+
+#if !defined MAX_PLAYERS
+    #define MAX_PLAYERS 32
+#endif
+
+#if !defined MAX_VALUE_LENGTH
+    #define MAX_VALUE_LENGTH 32
+#endif
+
+#if !defined MAX_RESOURCE_PATH_LENGTH
+    #define MAX_RESOURCE_PATH_LENGTH 128
+#endif
+
+#if !defined MAX_FILE_CELL_SIZE
+    #define MAX_FILE_CELL_SIZE 192
+#endif
+
+#if !defined MAX_PLATFORM_PATH_LENGTH
+    #define MAX_PLATFORM_PATH_LENGTH 256
+#endif
+
 #define MAX_SUBMODELS   20
 #define SET_MODEL_DELAY 0.5
 #define SET_MODEL_TASK  1357
 
-new const PLUGIN_VERSION[] = "1.1"
+new const PLUGIN_VERSION[]          = "1.2"
+new const Float:DELAY_ON_CONNECT    = 1.0
+new const ERROR_FILE[]              = "Charger_ERRORS.log"
 
-new Array:g_aModelT, Array:g_aModelCT,
-    g_szLastModel[MAX_PLAYERS + 1][32],
-    g_szCurrentModel[MAX_PLAYERS + 1][32],
-    g_szArgModel[MAX_PLAYERS + 1][32],
-    g_iCurrentSubModel[MAX_PLAYERS + 1],
-    bool:g_bFileWasRead = false,
-    g_iModelT, g_iModelCT,
+enum _:PLAYER_DATA
+{
+    PDATA_ADMIN_FLAGS,
+    PDATA_LAST_MODEL[MAX_VALUE_LENGTH],
+    PDATA_CURRENT_MODEL[MAX_VALUE_LENGTH],
+    PDATA_ARG_MODEL[MAX_VALUE_LENGTH],
+    PDATA_CURRENT_SUBMODEL
+}
+
+enum _:RANK
+{
+    RANK_USER,
+    RANK_VIP,
+    RANK_ADMIN,
+    RANK_OWNER
+}
+
+new g_eRank[RANK], Array:g_aModelT[RANK], Array:g_aModelCT[RANK],
+    g_ePlayerData[MAX_PLAYERS + 1][PLAYER_DATA],
     bool:g_bFoundMap
 
 enum _:MODEL
@@ -53,30 +96,26 @@ public plugin_init()
 
 public plugin_precache()
 {
-    g_aModelT = ArrayCreate(MODEL)
-    g_aModelCT = ArrayCreate(MODEL)
+    for ( new i = 0; i < RANK; i++ )
+    {
+        g_aModelT[i] = ArrayCreate(MODEL)
+        g_aModelCT[i] = ArrayCreate(MODEL)
+    }
 
     ReadFile()
 }
 
 public plugin_end()
 {
-    ArrayDestroy(g_aModelT)
-    ArrayDestroy(g_aModelCT)
+    for ( new i = 0; i < RANK; i++ )
+    {
+        ArrayDestroy(g_aModelT[i])
+        ArrayDestroy(g_aModelCT[i])
+    }
 }
 
 ReadFile()
 {
-    if ( g_bFileWasRead )
-    {
-        g_iModelT = 0
-        g_iModelCT = 0
-        g_bFoundMap = false
-
-        ArrayClear(g_aModelT)
-        ArrayClear(g_aModelCT)
-    }
-
     new g_szFileName[128]
     get_configsdir(g_szFileName, charsmax(g_szFileName))
     add(g_szFileName, charsmax(g_szFileName), "/MapPlayerModels.ini")
@@ -90,7 +129,7 @@ ReadFile()
     }
 
     new szData[128], szKey[32], szValue[128],
-        eModel[MODEL], szCurrentMap[32], szToken[4]
+        szCurrentMap[32], iSection, iLine, iPos
 
     get_mapname(szCurrentMap, charsmax(szCurrentMap))
 
@@ -99,118 +138,106 @@ ReadFile()
         fgets(iFile, szData, charsmax(szData))
         trim(szData)
 
-        if ( g_bFoundMap )
+        switch( szData[0] )
         {
-            if ( szData[0] == '[' )
-                break
-
-            strtok(szData, szKey, charsmax(szKey), szValue, charsmax(szValue), '=')
-            trim(szKey)
-            trim(szValue)
-
-            if ( equali(szKey, "T") )
+            case EOS, ';', '#':
             {
-                strtok(szValue, szKey, charsmax(szKey), szValue, charsmax(szValue), ',')
+                continue
+            }
+            case '[':
+            {
+                if ( g_bFoundMap )
+                    break
+
+                if ( szData[strlen(szData) - 1] == ']' )
+                {
+                    replace(szData, charsmax( szData ), "[", "")
+                    replace(szData, charsmax( szData ), "]", "")
+                    trim(szData)
+
+                    if ( equali(szData, "Rank") )
+                    {
+                        iSection = SECTION_RANK
+                    }
+                    else if ( equali(szData, szCurrentMap) )
+                    {
+                        iSection = SECTION_MAP
+                        g_bFoundMap = true
+                    }
+                }
+            }
+            default:
+            {
+                strtok(szData, szKey, charsmax(szKey), szValue, charsmax(szValue), '=')
+                iPos = contain(szValue, "#")
+                if ( iPos != -1 )
+                    szValue[iPos] = EOS
+
                 trim(szKey)
                 trim(szValue)
 
-                while ( szKey[0] )
+                switch( iSection )
                 {
-                    strtok(szKey, szKey, charsmax(szKey), szData, charsmax(szData), ':')
-                    trim(szKey); trim(szData)
-                    copy(eModel[MODEL_NAME], charsmax(eModel[MODEL_NAME]), szKey)
-
-                    eModel[MODEL_SUBMODEL] = false
-                    eModel[MODEL_SUBMODEL_LIST_COUNT] = 0
-
-                    if ( szData[0] )
+                    case SECTION_NONE:
                     {
-                        eModel[MODEL_SUBMODEL] = true
-
-                        while( szData[0] && eModel[MODEL_SUBMODEL_LIST_COUNT] < MAX_SUBMODELS )
-                        {
-                            strtok(szData, szToken, charsmax(szToken), szData, charsmax(szData), ' ')
-                            eModel[MODEL_SUBMODEL_LIST][eModel[MODEL_SUBMODEL_LIST_COUNT] ++] = str_to_num(szToken)
-                        }
+                        LogConfigError(iLine, "Data is not in any defined section: %s", szData)
                     }
-
-                    formatex(szData, charsmax(szData), "models/player/%s/%s.mdl", szKey, szKey)
-                    precache_model(szData)
-
-                    ArrayPushArray(g_aModelT, eModel)
-                    g_iModelT ++
-
-                    trim(szValue)
-                    strtok(szValue, szKey, charsmax(szKey), szValue, charsmax(szValue), ',')
-                    trim(szKey)
+                    case SECTION_RANK:
+                    {
+                        if ( equali(szKey, "USER") )
+                            g_eRank[RANK_USER] = read_flags(szValue)
+                        else if ( equali(szKey, "VIP") )
+                            g_eRank[RANK_VIP] = read_flags(szValue)
+                        else if ( equali(szKey, "ADMIN") )
+                            g_eRank[RANK_ADMIN] = read_flags(szValue)
+                        else if ( equali(szKey, "OWNER") )
+                            g_eRank[RANK_OWNER] = read_flags(szValue)
+                    }
+                    case SECTION_MAP:
+                    {
+                        if ( equali(szKey, "T") )
+                            parseModel(szValue, charsmax(szValue), g_aModelT[RANK_USER])
+                        else if ( equali(szKey, "T_VIP") )
+                            parseModel(szValue, charsmax(szValue), g_aModelT[RANK_VIP])
+                        else if ( equali(szKey, "T_ADMIN") )
+                            parseModel(szValue, charsmax(szValue), g_aModelT[RANK_ADMIN])
+                        else if ( equali(szKey, "T_OWNER") )
+                            parseModel(szValue, charsmax(szValue), g_aModelT[RANK_OWNER])
+                        else if ( equali(szKey, "CT") )
+                            parseModel(szValue, charsmax(szValue), g_aModelCT[RANK_USER])
+                        else if ( equali(szKey, "CT_VIP") )
+                            parseModel(szValue, charsmax(szValue), g_aModelCT[RANK_VIP])
+                        else if ( equali(szKey, "CT_ADMIN") )
+                            parseModel(szValue, charsmax(szValue), g_aModelCT[RANK_ADMIN])
+                        else if ( equali(szKey, "CT_OWNER") )
+                            parseModel(szValue, charsmax(szValue), g_aModelCT[RANK_OWNER])
+                    }
                 }
             }
-            else if ( equali(szKey, "CT") )
-            {
-                strtok(szValue, szKey, charsmax(szKey), szValue, charsmax(szValue), ',')
-                trim(szKey)
-                trim(szValue)
-
-                while ( szKey[0] )
-                {
-                    strtok(szKey, szKey, charsmax(szKey), szData, charsmax(szData), ':')
-                    trim(szKey); trim(szData)
-                    copy(eModel[MODEL_NAME], charsmax(eModel[MODEL_NAME]), szKey)
-
-                    eModel[MODEL_SUBMODEL] = false
-                    eModel[MODEL_SUBMODEL_LIST_COUNT] = 0
-
-                    if ( szData[0] )
-                    {
-                        eModel[MODEL_SUBMODEL] = true
-
-                        while( szData[0] && eModel[MODEL_SUBMODEL_LIST_COUNT] < MAX_SUBMODELS )
-                        {
-                            strtok(szData, szToken, charsmax(szToken), szData, charsmax(szData), ' ')
-                            eModel[MODEL_SUBMODEL_LIST][eModel[MODEL_SUBMODEL_LIST_COUNT] ++] = str_to_num(szToken)
-                        }
-                    }
-
-                    formatex(szData, charsmax(szData), "models/player/%s/%s.mdl", szKey, szKey)
-                    precache_model(szData)
-
-                    ArrayPushArray(g_aModelCT, eModel)
-                    g_iModelCT ++
-
-                    trim(szValue)
-                    strtok(szValue, szKey, charsmax(szKey), szValue, charsmax(szValue), ',')
-                    trim(szKey)
-                }
-            }
-        }
-        else
-        {
-            if ( szData[0] != '['
-            || szData[strlen(szData) - 1] != ']' )
-                continue
-
-            replace(szData, charsmax( szData ), "[", "")
-            replace(szData, charsmax( szData ), "]", "")
-            trim(szData)
-
-            if ( !equali(szData, szCurrentMap) )
-                continue
-
-            g_bFoundMap = true
         }
     }
 
-    g_bFileWasRead = true
     fclose(iFile)
+}
+
+public client_authorized(id)
+{
+    set_task(DELAY_ON_CONNECT, "UpdateData", id)
 }
 
 public client_disconnected(id)
 {
-    g_szLastModel[id][0] = EOS
-    g_szCurrentModel[id][0] = EOS
-    g_szArgModel[id][0] = EOS
+    g_ePlayerData[id][PDATA_LAST_MODEL][0] = EOS
+    g_ePlayerData[id][PDATA_CURRENT_MODEL][0] = EOS
+    g_ePlayerData[id][PDATA_ARG_MODEL][0] = EOS
+    g_ePlayerData[id][PDATA_CURRENT_SUBMODEL] = -1
 
     remove_task(id + SET_MODEL_TASK)
+}
+
+public UpdateData(id)
+{
+    g_ePlayerData[id][PDATA_ADMIN_FLAGS] = get_user_flags(id)
 }
 
 public fwdSetKeyValue(id, szInfo[], szKey[], szValue[])
@@ -219,7 +246,7 @@ public fwdSetKeyValue(id, szInfo[], szKey[], szValue[])
     || !equal(szKey, "model") )
         return FMRES_IGNORED
 
-    copy(g_szArgModel[id], charsmax(g_szArgModel[]), szValue)
+    copy(g_ePlayerData[id][PDATA_ARG_MODEL], charsmax(g_ePlayerData[][PDATA_ARG_MODEL]), szValue)
     remove_task(id + SET_MODEL_TASK)
     set_task(SET_MODEL_DELAY, "SetModel", id + SET_MODEL_TASK)
     return FMRES_IGNORED
@@ -231,32 +258,33 @@ public SetModel(iTask)
     if ( cs_get_user_team(id) == CS_TEAM_SPECTATOR )
         return;
 
-    new eModel[MODEL], CsTeams:iCurrentTeam
+    new eModel[MODEL], CsTeams:iCurrentTeam, iRank
     iCurrentTeam = cs_get_user_team(id)
+    iRank = getRank(id)
 
-    if ( !equali(g_szLastModel[id], g_szArgModel[id]) )
+    if ( !equali(g_ePlayerData[id][PDATA_LAST_MODEL], g_ePlayerData[id][PDATA_ARG_MODEL]) )
     {
-        copy(g_szLastModel[id], charsmax(g_szLastModel[]), g_szArgModel[id])
+        copy(g_ePlayerData[id][PDATA_LAST_MODEL], charsmax(g_ePlayerData[][PDATA_LAST_MODEL]), g_ePlayerData[id][PDATA_ARG_MODEL])
 
-        if ( iCurrentTeam == CS_TEAM_T && g_iModelT > 0 )
+        if ( iCurrentTeam == CS_TEAM_T && ArraySize(g_aModelT[iRank]) )
         {
-            ArrayGetArray(g_aModelT, random(g_iModelT), eModel)
-            copy(g_szCurrentModel[id], charsmax(g_szCurrentModel[]), eModel[MODEL_NAME])
+            ArrayGetArray(g_aModelT[iRank], random(ArraySize(g_aModelT[iRank])), eModel)
+            copy(g_ePlayerData[id][PDATA_CURRENT_MODEL], charsmax(g_ePlayerData[][PDATA_CURRENT_MODEL]), eModel[MODEL_NAME])
 
             if ( eModel[MODEL_SUBMODEL] && eModel[MODEL_SUBMODEL_LIST_COUNT] > 0 )
-                g_iCurrentSubModel[id] = eModel[MODEL_SUBMODEL_LIST][random(eModel[MODEL_SUBMODEL_LIST_COUNT])]
+                g_ePlayerData[id][PDATA_CURRENT_SUBMODEL] = eModel[MODEL_SUBMODEL_LIST][random(eModel[MODEL_SUBMODEL_LIST_COUNT])]
             else
-                g_iCurrentSubModel[id] = -1
+                g_ePlayerData[id][PDATA_CURRENT_SUBMODEL] = -1
         }
-        else if ( iCurrentTeam == CS_TEAM_CT && g_iModelCT > 0 )
+        else if ( iCurrentTeam == CS_TEAM_CT && ArraySize(g_aModelCT[iRank]) )
         {
-            ArrayGetArray(g_aModelCT, random(g_iModelCT), eModel)
-            copy(g_szCurrentModel[id], charsmax(g_szCurrentModel[]), eModel[MODEL_NAME])
+            ArrayGetArray(g_aModelCT[iRank], random(ArraySize(g_aModelCT[iRank])), eModel)
+            copy(g_ePlayerData[id][PDATA_CURRENT_MODEL], charsmax(g_ePlayerData[][PDATA_CURRENT_MODEL]), eModel[MODEL_NAME])
 
             if ( eModel[MODEL_SUBMODEL] && eModel[MODEL_SUBMODEL_LIST_COUNT] > 0 )
-                g_iCurrentSubModel[id] = eModel[MODEL_SUBMODEL_LIST][random(eModel[MODEL_SUBMODEL_LIST_COUNT])]
+                g_ePlayerData[id][PDATA_CURRENT_SUBMODEL] = eModel[MODEL_SUBMODEL_LIST][random(eModel[MODEL_SUBMODEL_LIST_COUNT])]
             else
-                g_iCurrentSubModel[id] = -1
+                g_ePlayerData[id][PDATA_CURRENT_SUBMODEL] = -1
         }
         else
         {
@@ -264,7 +292,65 @@ public SetModel(iTask)
         }
     }
 
-    cs_set_user_model(id, g_szCurrentModel[id], true)
-    if ( g_iCurrentSubModel[id] != -1 )
-        set_pev(id, pev_body, g_iCurrentSubModel[id])
+    cs_set_user_model(id, g_ePlayerData[id][PDATA_CURRENT_MODEL], true)
+    if ( g_ePlayerData[id][PDATA_CURRENT_SUBMODEL] != -1 )
+        set_pev(id, pev_body, g_ePlayerData[id][PDATA_CURRENT_SUBMODEL])
+}
+
+stock getRank(id)
+{
+    for ( new i = RANK_OWNER; i > RANK_USER; i -- )
+    {
+        if ( g_ePlayerData[id][PDATA_ADMIN_FLAGS] & g_eRank[i] )
+            return i
+    }
+
+    return RANK_USER
+}
+
+stock parseModel(szValue[], iValueLen, any:aModel)
+{
+    new szKey[64], szData[64], szToken[8],
+        eModel[MODEL]
+
+    strtok(szValue, szKey, charsmax(szKey), szValue, iValueLen, ',')
+    trim(szKey)
+
+    while ( szKey[0] )
+    {
+        strtok(szKey, szKey, charsmax(szKey), szData, charsmax(szData), ':')
+        trim(szKey); trim(szData)
+        copy(eModel[MODEL_NAME], charsmax(eModel[MODEL_NAME]), szKey)
+
+        eModel[MODEL_SUBMODEL] = false
+        eModel[MODEL_SUBMODEL_LIST_COUNT] = 0
+
+        if ( szData[0] )
+        {
+            eModel[MODEL_SUBMODEL] = true
+
+            while ( szData[0] && eModel[MODEL_SUBMODEL_LIST_COUNT] < MAX_SUBMODELS )
+            {
+                strtok(szData, szToken, charsmax(szToken), szData, charsmax(szData), ' ')
+                eModel[MODEL_SUBMODEL_LIST][eModel[MODEL_SUBMODEL_LIST_COUNT]++] = str_to_num(szToken)
+            }
+        }
+
+        formatex(szData, charsmax(szData), "models/player/%s/%s.mdl", szKey, szKey)
+        precache_model(szData)
+
+        ArrayPushArray(aModel, eModel)
+
+        trim(szValue)
+        strtok(szValue, szKey, charsmax(szKey), szValue, iValueLen, ',')
+        trim(szKey)
+    }
+}
+
+stock LogConfigError(const iLine, const szText[], any:...)
+{
+    new szError[MAX_PLATFORM_PATH_LENGTH]
+    vformat(szError, charsmax(szError), szText, 3)
+
+    log_to_file(ERROR_FILE, "^nLine %d: %s", iLine, szError)
 }
