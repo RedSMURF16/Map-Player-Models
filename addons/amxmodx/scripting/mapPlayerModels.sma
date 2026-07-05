@@ -51,7 +51,7 @@ enum
 #endif
 
 #define MAX_SUBMODELS   20
-#define SET_MODEL_DELAY 0.5
+#define SET_MODEL_DELAY 0.25
 #define SET_MODEL_TASK  1357
 
 new const PLUGIN_VERSION[]          = "1.2"
@@ -260,7 +260,7 @@ public SetModel(iTask)
 
     new eModel[MODEL], CsTeams:iCurrentTeam, iRank
     iCurrentTeam = cs_get_user_team(id)
-    iRank = getRank(id)
+    iRank = getRank(id, iCurrentTeam)
 
     if ( !equali(g_ePlayerData[id][PDATA_LAST_MODEL], g_ePlayerData[id][PDATA_ARG_MODEL]) )
     {
@@ -297,11 +297,12 @@ public SetModel(iTask)
         set_pev(id, pev_body, g_ePlayerData[id][PDATA_CURRENT_SUBMODEL])
 }
 
-stock getRank(id)
+stock getRank(id, CsTeams:iTeam)
 {
-    for ( new i = RANK_OWNER; i > RANK_USER; i -- )
+    for ( new i = RANK_OWNER; i >= RANK_USER; i -- )
     {
-        if ( g_ePlayerData[id][PDATA_ADMIN_FLAGS] & g_eRank[i] )
+        if ( g_ePlayerData[id][PDATA_ADMIN_FLAGS] & g_eRank[i]
+        && ArraySize(CsTeams:iTeam == CS_TEAM_T ? g_aModelT[i] : g_aModelCT[i]) )
             return i
     }
 
