@@ -51,7 +51,7 @@ enum
 #endif
 
 #define MAX_SUBMODELS   20
-#define SET_MODEL_DELAY 0.25
+#define SET_MODEL_DELAY 0.5
 #define SET_MODEL_TASK  1357
 
 new const PLUGIN_VERSION[]          = "1.2"
