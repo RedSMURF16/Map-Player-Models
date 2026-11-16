@@ -37,3 +37,5 @@ Models are read from a configuration file keyed by map name, so each map can hav
 * v1.1: Supports sub-models.
 * v1.2: Added rank-based model pools (USER/VIP/ADMIN/OWNER).
 ```
+
+[![Watch on YouTube](https://img.shields.io/badge/YouTube-Watch%20video-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=Fzv_gJ4CUqc)
