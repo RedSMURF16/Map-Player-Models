@@ -14,7 +14,10 @@ Models are read from a configuration file keyed by map name, so each map can hav
 - Detects the player's own selected model (cl_playermodel) and reacts only when it actually changes
 - Automatically precaches every model defined for the current map on server start
 - Does nothing if the current map has no matching section in the config, or if a team has no models defined
-- [color=red]Requires AMX Mod X 1.9.0+[/color]
+
+## 📋 Requirements
+- ReGameDLL
+- AMX Mod X 1.10+
 
 ## ⚙️ Configuration
 ```ini
