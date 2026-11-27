@@ -1,7 +1,7 @@
 <h1 align="center">Map Player Models</h1>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=Fzv_gJ4CUqc"><img src="https://img.youtube.com/vi/Fzv_gJ4CUqc/maxresdefault.jpg" alt="Watch on YouTube" width="600"></a>
+  <img src="images/demo.gif" alt="Map Player Models">
 </p>
 
 ## 📝 Description
